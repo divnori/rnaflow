@@ -13,6 +13,7 @@ from data_loader import MSAFeaturize, MSABlockDeletion, merge_a3m_homo, merge_a3
 from kinematics import xyz_to_c6d, c6d_to_bins, xyz_to_t2d
 from util_module import XYZConverter
 from chemical import NTOTAL, NTOTALDOFS, NAATOKENS, INIT_CRDS, INIT_NA_CRDS
+from loss import calc_str_loss
 
 # suppress dgl warning w/ newest pytorch
 import warnings
@@ -104,7 +105,7 @@ def pae_unbin(pred_pae):
     return torch.sum(pae_bins[None,:,None,None]*pred_pae, dim=1)
 
 class Predictor():
-    def __init__(self, model_weights, device="cuda:0"):
+    def __init__(self, model_weights, device="cuda"):
         # define model name
         self.model_weights = model_weights
         self.device = device
@@ -133,11 +134,13 @@ class Predictor():
         if not os.path.exists(model_weights):
             return False
         checkpoint = torch.load(model_weights, map_location=self.device)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         return True
 
-    def predict(self, inputs, out_prefix, ffdb, n_templ=4):
+    def predict(self, inputs, ffdb, out_prefix=None, n_templ=4, inference=True):
+        self.xyz_converter = self.xyz_converter.to(self.device)
         # pass 1, combined MSA
+        inputs = inputs.split(" ")
         Ls, msas, inss, types = [], [], [], []
         has_paired = False
         for i,seq_i in enumerate(inputs):
@@ -217,7 +220,7 @@ class Predictor():
                 t1d[:ntmpl_i,startres:stopres,:] = t1d_i
                 mask_t[:ntmpl_i,startres:stopres,:] = mask_t_i
 
-        same_chain = torch.zeros((1,L,L), dtype=torch.bool, device=xyz_t.device)
+        same_chain = torch.zeros((1,L,L), dtype=torch.bool, device=self.device)
         stopres = 0
         for i in range(1,len(Ls)):
             startres,stopres = sum(Ls[:(i-1)]), sum(Ls[:i])
@@ -225,9 +228,9 @@ class Predictor():
         same_chain[:,stopres:,stopres:] = True
 
         # template features
-        xyz_t = xyz_t[:maxtmpl].float().unsqueeze(0)
-        mask_t = mask_t[:maxtmpl].unsqueeze(0)
-        t1d = t1d[:maxtmpl].float().unsqueeze(0)
+        xyz_t = xyz_t[:maxtmpl].float().unsqueeze(0).to(self.device)
+        mask_t = mask_t[:maxtmpl].unsqueeze(0).to(self.device)
+        t1d = t1d[:maxtmpl].float().unsqueeze(0).to(self.device)
 
         mask_t_2d = mask_t[:,:,:,:3].all(dim=-1) # (B, T, L)
         mask_t_2d = mask_t_2d[:,:,None]*mask_t_2d[:,:,:,None] # (B, T, L, L)
@@ -243,12 +246,72 @@ class Predictor():
         alpha_mask = alpha_mask.reshape(1,-1,L,NTOTALDOFS,1)
         alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3*NTOTALDOFS)
 
-        self.model.eval()
-        for i_trial in range(NMODELS):
-            if os.path.exists("%s_%02d.pdb"%(out_prefix, i_trial)):
-                continue
-            self._run_model(Ls, msa_orig, ins_orig, t1d, t2d, xyz_t, xyz_t[:,0], alpha_t, same_chain, mask_t_2d, "%s_%02d"%(out_prefix, i_trial))
-            torch.cuda.empty_cache()
+        if inference:
+            self.model.eval()
+            for i_trial in range(NMODELS):
+                if os.path.exists("%s_%02d.pdb"%(out_prefix, i_trial)):
+                    continue
+                self._run_model(Ls, msa_orig, ins_orig, t1d, t2d, xyz_t, xyz_t[:,0], alpha_t, same_chain, mask_t_2d, "%s_%02d"%(out_prefix, i_trial))
+                torch.cuda.empty_cache()
+        else:
+            return self._train_model(Ls, msa_orig, ins_orig, t1d, t2d, xyz_t, xyz_t[:,0], alpha_t, same_chain, mask_t_2d)
+
+    def _train_model(self, L_s, msa_orig, ins_orig, t1d, t2d, xyz_t, xyz, alpha_t, same_chain, mask_t_2d):
+        seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(
+            msa_orig, ins_orig, p_mask=0.0, params={'MAXLAT': MAXLAT, 'MAXSEQ': MAXSEQ, 'MAXCYCLE': MAX_CYCLE})
+
+        _, N, L = msa_seed.shape[:3]
+        B = 1   
+        #
+        idx_pdb = torch.arange(L).long().view(1, L)
+        for i in range(len(L_s)-1):
+            idx_pdb[ :, sum(L_s[:(i+1)]): ] += 100
+
+        #
+        seq = seq.unsqueeze(0)
+        msa_seed = msa_seed.unsqueeze(0)
+        msa_extra = msa_extra.unsqueeze(0)
+
+        t1d = t1d.to(self.device)
+        t2d = t2d.to(self.device)
+        idx_pdb = idx_pdb.to(self.device)
+        xyz_t = xyz_t.to(self.device)
+        alpha_t = alpha_t.to(self.device)
+        xyz = xyz.to(self.device)
+        same_chain = same_chain.to(self.device)
+        mask_t_2d = mask_t_2d.to(self.device)
+        
+        msa_prev = None
+        pair_prev = None
+        alpha_prev = torch.zeros((1,L,NTOTALDOFS,2), device=self.device)
+        xyz_prev=xyz
+        state_prev = None
+        
+        msa_seed_i = msa_seed[:,0].to(self.device)
+        msa_extra_i = msa_extra[:,0].to(self.device)
+        seq_i = seq[:,0].to(self.device)
+        with torch.cuda.amp.autocast(True):
+            logit_s, logit_aa_s, logit_pae, p_bind, init_crds, alpha_prev, _, pred_lddt_binned, msa_prev, pair_prev, state_prev = self.model(
+                msa_latent=msa_seed_i, 
+                msa_full=msa_extra_i,
+                seq=seq_i, 
+                seq_unmasked=seq_i, 
+                xyz=xyz_prev, 
+                sctors=alpha_prev,
+                idx=idx_pdb,
+                t1d=t1d, 
+                t2d=t2d,
+                xyz_t=xyz_t[:,:,:,1],
+                mask_t=mask_t_2d,
+                alpha_t=alpha_t,
+                msa_prev=msa_prev,
+                pair_prev=pair_prev,
+                state_prev=state_prev,
+                same_chain=same_chain
+            )
+
+        return seq, logit_pae, init_crds, mask_t_2d, same_chain
+
 
     def _run_model(self, L_s, msa_orig, ins_orig, t1d, t2d, xyz_t, xyz, alpha_t, same_chain, mask_t_2d, out_prefix):
         self.xyz_converter = self.xyz_converter.to(self.device)
@@ -324,7 +387,7 @@ class Predictor():
                     pred_lddt.mean().cpu().numpy(), 
                     best_lddt.mean().cpu().numpy()
                 ) )
-
+        
                 _, all_crds = self.xyz_converter.compute_all_atom(seq[:,i_cycle], init_crds[-1], alpha_prev)
 
                 if pred_lddt.mean() < best_lddt.mean():
@@ -354,6 +417,201 @@ class Predictor():
             lddt=best_lddt[0].detach().cpu().numpy().astype(np.float16), \
             pae=best_pae[0].detach().cpu().numpy().astype(np.float16)
         )
+    
+    def prep_inputs(self, inputs, ffdb=None, n_templ=1, rna_seq_input=None, pred_one_hot=None):
+        self.xyz_converter = self.xyz_converter.to(self.device)
+        # pass 1, combined MSA
+        inputs = inputs.split(" ")
+        Ls, msas, inss, types = [], [], [], []
+        has_paired = False
+        for i,seq_i in enumerate(inputs):
+            fseq_i =  seq_i.split(':')
+            fseq_i[0] = fseq_i[0].upper()
+            assert (len(fseq_i) >= 2)
+            assert (fseq_i[0] in ["P","R","D","S","PR"])
+            type_i,a3m_i = fseq_i[:2]
+
+            if (fseq_i[0]=="PR"):
+                msa_i, ins_i, Ls_i = parse_mixed_fasta(a3m_i)
+                Ls.extend(Ls_i)
+                has_paired = True
+            else:
+                if (fseq_i[0]=="P"):
+                    msa_i, ins_i = parse_a3m(a3m_i)
+                else:
+                    is_rna = fseq_i[0]=='R'
+                    is_dna = fseq_i[0]=='D' or fseq_i[0]=='S'
+                    msa_i, ins_i = parse_fasta(a3m_i, rna_alphabet=is_rna, dna_alphabet=is_dna)
+
+                    if rna_seq_input is not None:
+                        mapping = {"A": 27, "C": 28, "G": 29, "U": 30, "X": 31}
+                        try:
+                            msa_i[0] = np.array([mapping[l] for l in list(rna_seq_input)])
+                        except Exception as e:
+                            return 0, torch.Tensor([0]).to("cuda"), 0, 0
+
+                _, L = msa_i.shape
+                Ls.append(L)
+
+            msa_i = torch.tensor(msa_i).long()
+            ins_i = torch.tensor(ins_i).long()
+
+            if (msa_i.shape[0] > MAXSEQ):
+                idxs_tokeep = np.random.permutation(msa_i.shape[0])[:MAXSEQ]
+                idxs_tokeep[0] = 0  # keep best
+                msa_i = msa_i[idxs_tokeep]
+                ins_i = ins_i[idxs_tokeep]
+
+            msas.append(msa_i)
+            inss.append(ins_i)
+            types.append(fseq_i[0])
+
+            # add strand compliment
+            if (fseq_i[0]=='D'):
+                msas.append( util.dna_reverse_complement(msa_i) )
+                inss.append( ins_i.clone() )
+                Ls.append(L)
+                types.append(fseq_i[0])
+
+        msa_orig = {'msa':msas[0],'ins':inss[0]}
+        if (has_paired):
+            if (len(Ls)!=2 or len(msas)!=1):
+                print ("ERROR: Paired Protein/NA fastas can not be combined with other inputs!")
+                assert (False)
+        else:
+            for i in range(1,len(Ls)):
+                msa_orig = merge_a3m_hetero(msa_orig, {'msa':msas[i],'ins':inss[i]}, [sum(Ls[:i]),Ls[i]])
+
+        msa_orig, ins_orig = msa_orig['msa'], msa_orig['ins']
+
+        # pass 2, templates
+        L = sum(Ls)
+
+        xyz_t = INIT_CRDS.reshape(1,1,NTOTAL,3).repeat(n_templ,L,1,1) + torch.rand(n_templ,L,1,3)*5.0 - 2.5
+        is_NA = util.is_nucleic(msa_orig[0])
+        xyz_t[:,is_NA] = INIT_NA_CRDS.reshape(1,1,NTOTAL,3)
+
+        mask_t = torch.full((n_templ, L, NTOTAL), False) 
+        t1d = torch.nn.functional.one_hot(torch.full((n_templ, L), 20).long(), num_classes=NAATOKENS-1).float() # all gaps
+        t1d = torch.cat((t1d, torch.zeros((n_templ,L,1)).float()), -1)
+
+        maxtmpl=1
+        # for i,seq_i in enumerate(inputs):
+        #     fseq_i =  seq_i.split(':')
+        #     fseq_i[0] = fseq_i[0].upper()
+        #     if (fseq_i[0]=="P" and len(fseq_i) == 4):
+        #         hhr_i,atab_i = fseq_i[2:4]
+        #         startres,stopres = sum(Ls[:i]), sum(Ls[:(i+1)])
+        #         xyz_t_i, t1d_i, mask_t_i = read_templates(Ls[i], ffdb, hhr_i, atab_i, n_templ=n_templ)
+        #         ntmpl_i = xyz_t_i.shape[0]
+        #         maxtmpl = max(maxtmpl, ntmpl_i)
+        #         xyz_t[:ntmpl_i,startres:stopres,:,:] = xyz_t_i
+        #         t1d[:ntmpl_i,startres:stopres,:] = t1d_i
+        #         mask_t[:ntmpl_i,startres:stopres,:] = mask_t_i
+
+        same_chain = torch.zeros((1,L,L), dtype=torch.bool, device=self.device)
+        stopres = 0
+        for i in range(1,len(Ls)):
+            startres,stopres = sum(Ls[:(i-1)]), sum(Ls[:i])
+            same_chain[:,startres:stopres,startres:stopres] = True
+        same_chain[:,stopres:,stopres:] = True
+
+        # template features
+        xyz_t = xyz_t[:maxtmpl].float().unsqueeze(0).to(self.device)
+        mask_t = mask_t[:maxtmpl].unsqueeze(0).to(self.device)
+        t1d = t1d[:maxtmpl].float().unsqueeze(0).to(self.device)
+
+        mask_t_2d = mask_t[:,:,:,:3].all(dim=-1) # (B, T, L)
+        mask_t_2d = mask_t_2d[:,:,None]*mask_t_2d[:,:,:,None] # (B, T, L, L)
+        mask_t_2d = mask_t_2d.float()*same_chain.float()[:,None] # (ignore inter-chain region)
+        t2d = xyz_to_t2d(xyz_t, mask_t_2d)
+
+        seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
+        alpha, _, alpha_mask, _ = self.xyz_converter.get_torsions(xyz_t.reshape(-1,L,NTOTAL,3), seq_tmp, mask_in=mask_t.reshape(-1,L,NTOTAL))
+        alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
+
+        alpha[torch.isnan(alpha)] = 0.0
+        alpha = alpha.reshape(1,-1,L,NTOTALDOFS,2)
+        alpha_mask = alpha_mask.reshape(1,-1,L,NTOTALDOFS,1)
+        alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 3*NTOTALDOFS)
+
+        xyz = xyz_t[:,0]
+        try:
+            seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(
+                msa_orig, ins_orig, pred_one_hot=pred_one_hot, p_mask=0.0, params={'MAXLAT': MAXLAT, 'MAXSEQ': MAXSEQ, 'MAXCYCLE': MAX_CYCLE})
+        except:
+            return 0, torch.Tensor([0]).to("cuda"), 0, 0
+
+        _, N, L = msa_seed.shape[:3]
+        B = 1   
+        #
+        idx_pdb = torch.arange(L).long().view(1, L)
+        for i in range(len(Ls)-1):
+            idx_pdb[ :, sum(Ls[:(i+1)]): ] += 100
+
+        #
+        seq = seq.unsqueeze(0)
+        msa_seed = msa_seed.unsqueeze(0)
+        msa_extra = msa_extra.unsqueeze(0)
+
+        t1d = t1d.to(self.device)
+        t2d = t2d.to(self.device)
+        idx_pdb = idx_pdb.to(self.device)
+        xyz_t = xyz_t.to(self.device)
+        alpha_t = alpha_t.to(self.device)
+        xyz = xyz.to(self.device)
+        same_chain = same_chain.to(self.device)
+        mask_t_2d = mask_t_2d.to(self.device)
+        
+        msa_prev = None
+        pair_prev = None
+        alpha_prev = torch.zeros((1,L,NTOTALDOFS,2), device=self.device)
+        xyz_prev=xyz
+        state_prev = None
+        
+        msa_seed_i = msa_seed[:,0].clone().to(self.device)
+        msa_extra_i = msa_extra[:,0].clone().to(self.device)
+        seq_i = seq[:,0].clone().to(self.device)
+
+        return msa_seed_i, msa_extra_i, seq_i, xyz_prev, alpha_prev, idx_pdb, t1d, t2d, xyz_t[:,:,:,1], mask_t_2d, alpha_t, msa_prev, pair_prev, state_prev, same_chain
+    
+    def run_rf_module(self, msa_seed_i, msa_extra_i, seq_i, xyz_prev, alpha_prev, idx_pdb, t1d, t2d, xyz_t, mask_t_2d, alpha_t, msa_prev, pair_prev, state_prev, same_chain):
+                
+        # for distributed training
+        self.model = self.model.to(msa_seed_i.device)
+        self.model.simulator = self.model.simulator.to(msa_seed_i.device)
+        self.model.simulator.aamask = self.model.simulator.aamask.to(msa_seed_i.device)
+        self.model.simulator.num_bonds = self.model.simulator.num_bonds.to(msa_seed_i.device)
+        self.model.simulator.lj_correction_parameters = self.model.simulator.lj_correction_parameters.to(msa_seed_i.device)
+        self.model.simulator.ljlk_parameters = self.model.simulator.ljlk_parameters.to(msa_seed_i.device)
+        
+        with torch.cuda.amp.autocast(True):
+            logit_s, logit_aa_s, logit_pae, p_bind, init_crds, alpha_prev, _, pred_lddt_binned, msa_prev, pair_prev, state_prev = self.model(
+                msa_latent=msa_seed_i, 
+                msa_full=msa_extra_i,
+                seq=seq_i, 
+                seq_unmasked=seq_i, 
+                xyz=xyz_prev, 
+                sctors=alpha_prev,
+                idx=idx_pdb,
+                t1d=t1d, 
+                t2d=t2d,
+                xyz_t=xyz_t,
+                mask_t=mask_t_2d,
+                alpha_t=alpha_t,
+                msa_prev=msa_prev,
+                pair_prev=pair_prev,
+                state_prev=state_prev,
+                same_chain=same_chain
+            )
+
+        xyz_prev = init_crds[-1]
+        alpha_prev = alpha_prev[-1]
+        pred_lddt = lddt_unbin(pred_lddt_binned)
+
+        _, all_crds = self.xyz_converter.compute_all_atom(seq_i, init_crds[-1], alpha_prev)
+        return seq_i, all_crds, logit_pae, mask_t_2d, same_chain, pred_lddt
+
 
 if __name__ == "__main__":
     args = get_args()
@@ -366,7 +624,7 @@ if __name__ == "__main__":
 
     if (torch.cuda.is_available()):
         print ("Running on GPU")
-        pred = Predictor(args.model, torch.device("cuda:0"))
+        pred = Predictor(args.model, torch.device("cuda"))
     else:
         print ("Running on CPU")
         pred = Predictor(args.model, torch.device("cpu"))

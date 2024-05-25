@@ -438,6 +438,128 @@ class XYZConverter(nn.Module):
             'brtij,brtj->brti', 
             RTframes.gather(2,self.base_indices[seq][...,None,None].repeat(1,1,1,4,4)), basexyzs
         )
+        
+        return RTframes, xyzs[...,:3]
+    
+    def frames_to_na_coords(self, seq, Rs, Ts, alphas):
+        B,L = Rs.shape[:2]
+        RTF0 = torch.eye(4).repeat(B,L,1,1).to(device=Rs.device)
+
+        # bb
+        RTF0[:,:,:3,:3] = Rs
+        RTF0[:,:,:3,3] = Ts
+
+
+        # omega
+        RTF1 = torch.einsum(
+            'brij,brjk,brkl->bril',
+            RTF0, self.RTs_in_base_frame[seq,0,:].to(device=Rs.device), make_rotX(alphas[:,:,0,:]).to(device=Rs.device))
+
+        # phi
+        RTF2 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF0, self.RTs_in_base_frame[seq,1,:].to(device=Rs.device), make_rotX(alphas[:,:,1,:]).to(device=Rs.device))
+
+        # psi
+        RTF3 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF0, self.RTs_in_base_frame[seq,2,:].to(device=Rs.device), make_rotX(alphas[:,:,2,:]).to(device=Rs.device))
+
+        # CB bend
+        basexyzs = self.xyzs_in_base_frame[seq]
+        NCr = 0.5*(basexyzs[:,:,2,:3]+basexyzs[:,:,0,:3])
+        CAr = (basexyzs[:,:,1,:3])
+        CBr = (basexyzs[:,:,4,:3])
+        CBrotaxis1 = (CBr-CAr).cross(NCr-CAr)
+        CBrotaxis1 /= torch.linalg.norm(CBrotaxis1, dim=-1, keepdim=True)+1e-8
+
+        # CB twist
+        NCp = basexyzs[:,:,2,:3] - basexyzs[:,:,0,:3]
+        NCpp = NCp - torch.sum(NCp*NCr, dim=-1, keepdim=True)/ torch.sum(NCr*NCr, dim=-1, keepdim=True) * NCr
+        CBrotaxis2 = (CBr-CAr).cross(NCpp)
+        CBrotaxis2 /= torch.linalg.norm(CBrotaxis2, dim=-1, keepdim=True)+1e-8
+        
+        CBrot1 = make_rot_axis(alphas[:,:,7,:], CBrotaxis1 )
+        CBrot2 = make_rot_axis(alphas[:,:,8,:], CBrotaxis2 )
+        
+        RTF8 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF0, CBrot1.to(device=Rs.device),CBrot2.to(device=Rs.device))
+
+        # chi1 + CG bend
+        RTF4 = torch.einsum(
+            'brij,brjk,brkl,brlm->brim', 
+            RTF8, 
+            self.RTs_in_base_frame[seq,3,:].to(device=Rs.device), 
+            make_rotX(alphas[:,:,3,:]).to(device=Rs.device), 
+            make_rotZ(alphas[:,:,9,:]).to(device=Rs.device))
+
+        # chi2
+        RTF5 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF4, self.RTs_in_base_frame[seq,4,:].to(device=Rs.device),make_rotX(alphas[:,:,4,:]).to(device=Rs.device))
+
+        # chi3
+        RTF6 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF5,self.RTs_in_base_frame[seq,5,:].to(device=Rs.device),make_rotX(alphas[:,:,5,:]).to(device=Rs.device))
+
+        # chi4
+        RTF7 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF6,self.RTs_in_base_frame[seq,6,:].to(device=Rs.device),make_rotX(alphas[:,:,6,:]).to(device=Rs.device))
+
+        # ignore RTs_in_base_frame[seq,7:9,:] and alphas[:,:,10:12,:]
+
+        # NA alpha
+        RTF9 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF0, self.RTs_in_base_frame[seq,9,:].to(device=Rs.device), make_rotX(alphas[:,:,12,:]).to(device=Rs.device))
+
+        # NA beta
+        RTF10 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF9, self.RTs_in_base_frame[seq,10,:].to(device=Rs.device), make_rotX(alphas[:,:,13,:]).to(device=Rs.device))
+
+        # NA gamma
+        RTF11 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF10, self.RTs_in_base_frame[seq,11,:].to(device=Rs.device), make_rotX(alphas[:,:,14,:]).to(device=Rs.device))
+
+        # NA delta
+        RTF12 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF11, self.RTs_in_base_frame[seq,12,:].to(device=Rs.device), make_rotX(alphas[:,:,15,:]).to(device=Rs.device))
+
+        # NA nu2 - from gamma frame
+        RTF13 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF11, self.RTs_in_base_frame[seq,13,:].to(device=Rs.device), make_rotX(alphas[:,:,16,:]).to(device=Rs.device))
+
+        # NA nu1
+        RTF14 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF13, self.RTs_in_base_frame[seq,14,:].to(device=Rs.device), make_rotX(alphas[:,:,17,:]).to(device=Rs.device))
+
+        # NA nu0
+        RTF15 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF14, self.RTs_in_base_frame[seq,15,:].to(device=Rs.device), make_rotX(alphas[:,:,18,:].to(device=Rs.device)))
+
+        # NA chi - from nu1 frame
+        RTF16= torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF14, self.RTs_in_base_frame[seq,16,:].to(device=Rs.device), make_rotX(alphas[:,:,19,:]).to(device=Rs.device))
+
+        RTframes = torch.stack((
+            RTF0,RTF1,RTF2,RTF3,RTF4,RTF5,RTF6,RTF7,RTF8,
+            RTF9,RTF10,RTF11,RTF12,RTF13,RTF14,RTF15,RTF16
+        ),dim=2)
+
+        xyzs = torch.einsum(
+            'brtij,brtj->brti', 
+            RTframes.gather(2,self.base_indices.to(device=Rs.device)[seq.to(device=Rs.device)][...,None,None].repeat(1,1,1,4,4)), basexyzs.to(device=Rs.device)
+        )
 
         return RTframes, xyzs[...,:3]
 

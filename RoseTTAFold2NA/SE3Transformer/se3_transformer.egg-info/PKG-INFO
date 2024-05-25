@@ -1,0 +1,8 @@
+Metadata-Version: 2.1
+Name: se3-transformer
+Version: 1.0.0
+Summary: PyTorch + DGL implementation of SE(3)-Transformers
+Author: Alexandre Milesi
+Author-email: alexandrem@nvidia.com
+License-File: LICENSE
+License-File: NOTICE

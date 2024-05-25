@@ -233,6 +233,8 @@ def parse_a3m(filename, unzip=True, maxseq=10000):
     else:
         fstream = open(filename, 'r')
 
+    seq_count = 0
+
     for line in fstream:
 
         # skip labels
@@ -280,6 +282,11 @@ def parse_a3m(filename, unzip=True, maxseq=10000):
             i[pos] = num
 
         ins.append(i)
+
+        # ADDED - max seq count of 10 for MSAs to speed up processing
+        seq_count += 1
+        if seq_count >= maxseq:
+            break
 
         if (len(msa) >= maxseq):
             break

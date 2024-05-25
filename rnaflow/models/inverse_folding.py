@@ -5,11 +5,10 @@ import sys
 import torch
 import torch.nn.functional as F
 
-geo_rna_design_path = os.path.join('geometric-rna-design/src')
-sys.path.append(geo_rna_design_path)
-
+sys.path.append("geometric_rna_design/src")
 from model import AutoregressiveMultiGNN
-from data import RNADesignDataset
+from rna_data import RNADesignDataset
+
 from interpolant import Interpolant
 
 def compute_perplexity(logits, targets):

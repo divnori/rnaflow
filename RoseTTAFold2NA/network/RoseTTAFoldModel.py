@@ -1,5 +1,7 @@
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from Embeddings import MSA_emb, Extra_emb, Templ_emb, Recycling
 from Track_module import IterativeSimulator
 from AuxiliaryPredictor import DistanceNetwork, MaskedTokenNetwork,  LDDTNetwork, PAENetwork, BinderNetwork
@@ -27,6 +29,8 @@ class RoseTTAFoldModule(nn.Module):
         self.templ_emb = Templ_emb(d_pair=d_pair, d_templ=d_templ, d_state=d_state,
                                    n_head=n_head_templ,
                                    d_hidden=d_hidden_templ, p_drop=0.25)
+        
+
         # Update inputs with outputs from previous round
         self.recycle = Recycling(d_msa=d_msa, d_pair=d_pair, d_state_in=d_state, d_state_out=d_state)
 
@@ -62,7 +66,7 @@ class RoseTTAFoldModule(nn.Module):
     def forward(
         self, msa_latent, msa_full, seq, seq_unmasked, xyz, sctors, idx, 
         t1d=None, t2d=None, xyz_t=None, alpha_t=None, mask_t=None, same_chain=None,
-        msa_prev=None, pair_prev=None, state_prev=None, 
+        msa_prev=None, pair_prev=None, state_prev=None,
         return_raw=False, return_full=False,
         use_checkpoint=False
     ):
@@ -85,7 +89,8 @@ class RoseTTAFoldModule(nn.Module):
 
         #
         # add template embedding
-        pair, state = self.templ_emb(t1d, t2d, alpha_t, xyz_t, mask_t, pair, state, use_checkpoint=use_checkpoint)
+        pair, state = self.templ_emb(t1d, t2d, alpha_t, xyz_t, mask_t, pair, state, use_checkpoint=use_checkpoint) #[B,L,L,128], [B,L,64]
+
 
         # Predict coordinates from given inputs
         msa, pair, xyz, alpha, xyzallatom, state = self.simulator(

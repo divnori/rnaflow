@@ -221,12 +221,13 @@ class SCPred(nn.Module):
 
 
 class Str2Str(nn.Module):
-    def __init__(self, d_msa=256, d_pair=128, d_state=16, 
+    def __init__(self, d_msa=256, d_pair=128, d_state=16, d_timestep=32, 
             SE3_param={}, 
             nextra_l0=0, nextra_l1=0,
             rbf_sigma=1.0, p_drop=0.1
     ):
         super(Str2Str, self).__init__()
+        self.d_timestep = d_timestep
         
         # initial node & pair feature process
         self.norm_msa = nn.LayerNorm(d_msa)
@@ -245,7 +246,7 @@ class Str2Str(nn.Module):
         SE3_param_temp['l0_in_features'] += nextra_l0
         SE3_param_temp['l1_in_features'] += nextra_l1
         
-        self.se3 = SE3TransformerWrapper(**SE3_param_temp)
+        self.se3 = SE3TransformerWrapper(**SE3_param_temp).float()
         self.rbf_sigma = rbf_sigma
         self.sc_predictor = SCPred(
             d_msa=d_msa,
@@ -270,8 +271,9 @@ class Str2Str(nn.Module):
         # process msa & pair features
         B, N, L = msa.shape[:3]
         node = self.norm_msa(msa[:,0])
+
         pair = self.norm_pair(pair)
-        state = self.norm_state(state)
+        state = self.norm_state(state) #[B,L,64]
 
         node = torch.cat((node, state), dim=-1)
         node = self.norm_node(self.embed_x(node))
@@ -280,27 +282,28 @@ class Str2Str(nn.Module):
 
         neighbor = get_seqsep(idx)
         rbf_feat = rbf(torch.cdist(xyz[:,:,1], xyz[:,:,1]))
-        pair = torch.cat((pair, rbf_feat, neighbor), dim=-1)
+        pair = torch.cat((pair, rbf_feat, neighbor), dim=-1).float()
         pair = self.norm_edge2(self.embed_e2(pair))
 
         # define graph
         if top_k > 0:
-            G, edge_feats = make_topk_graph(xyz[:,:,1,:], pair, idx, top_k=top_k)
+            G, edge_feats = make_topk_graph(xyz[:,:,1,:].float(), pair.float(), idx.float(), top_k=top_k)
         else:
-            G, edge_feats = make_full_graph(xyz[:,:,1,:], pair, idx)
+            G, edge_feats = make_full_graph(xyz[:,:,1,:].float(), pair.float(), idx.float())
         l1_feats = xyz - xyz[:,:,1,:].unsqueeze(2)
         l1_feats = l1_feats.reshape(B*L, -1, 3)
         if extra_l1 is not None:
-            l1_feats = torch.cat( (l1_feats,extra_l1), dim=1 )
+            l1_feats = torch.cat( (l1_feats,extra_l1), dim=1 ).float()
         if extra_l0 is not None:
-            node = torch.cat( (node,extra_l0), dim=2 )
+            node = torch.cat( (node,extra_l0), dim=2 ).float()
 
         # apply SE(3) Transformer & update coordinates
-        shift = self.se3(G, node.reshape(B*L, -1, 1), l1_feats, edge_feats)
+        shift = self.se3(G, node.reshape(B*L, -1, 1).float(), l1_feats.float(), edge_feats.float())
 
-        state = shift['0'].reshape(B, L, -1) # (B, L, C)
+        state = shift['0'].reshape(B, L, -1).float() # (B, L, C)
         
-        offset = shift['1'].reshape(B, L, 2, 3)
+        offset = shift['1'].reshape(B, L, 2, 3).float()
+
         T = offset[:,:,0,:] / 10.0
         R = offset[:,:,1,:] / 100.0
 
@@ -318,14 +321,13 @@ class Str2Str(nn.Module):
         Rout[:,:,2,0] = 2*qB*qD - 2*qA*qC
         Rout[:,:,2,1] = 2*qC*qD + 2*qA*qB
         Rout[:,:,2,2] = qA*qA-qB*qB-qC*qC+qD*qD
+        Rout = Rout.float()
 
         xyz = torch.einsum('blij,blaj->blai', Rout,v)+xyz[:,:,1:2,:]+T[:,:,None,:]
 
         alpha = self.sc_predictor(msa[:,0], state)
-
         return xyz, state, alpha
-
-
+    
 class IterBlock(nn.Module):
     def __init__(self, d_msa=256, d_pair=128,
                  n_head_msa=8, n_head_pair=4,
@@ -487,9 +489,9 @@ class IterativeSimulator(nn.Module):
             )
 
             xyz, state, alpha = self.str_refiner(
-                msa.float(), pair.float(), xyz.detach().float(), state.float(), idx, 
-                extra_l0.float(), extra_l1.float(), top_k=128)
-
+                msa.float(), pair.float(), xyz.detach().float(), state.float(), idx,
+                extra_l0=extra_l0.float(), extra_l1=extra_l1.float(), top_k=128)
+            
             xyz_s.append(xyz)
             alpha_s.append(alpha)
 

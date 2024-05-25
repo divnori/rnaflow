@@ -82,7 +82,7 @@ def rigid_from_3_points(N, Ca, C, is_na=None, eps=1e-8):
     u2 = v2-(torch.einsum('...li, ...li -> ...l', e1, v2)[...,None]*e1)
     e2 = u2/(torch.norm(u2, dim=-1, keepdim=True)+eps)
     e3 = torch.cross(e1, e2, dim=-1)
-    R = torch.cat([e1[...,None], e2[...,None], e3[...,None]], axis=-1) #[B,L,3,3] - rotation matrix
+    R = torch.cat([e1[...,None], e2[...,None], e3[...,None]], axis=-1).float() #[B,L,3,3] - rotation matrix
     
     v2 = v2/(torch.norm(v2, dim=-1, keepdim=True)+eps)
     cosref = torch.sum(e1*v2, dim=-1)
@@ -98,6 +98,7 @@ def rigid_from_3_points(N, Ca, C, is_na=None, eps=1e-8):
     Rp[...,0,1] = -sindel
     Rp[...,1,0] = sindel
     Rp[...,1,1] = cosdel
+    Rp = Rp.float()
 
     R = torch.einsum('...ij,...jk->...ik', R,Rp)
 
@@ -120,11 +121,11 @@ def idealize_reference_frame(seq, xyz_in):
 
     protmask = ~namask
 
-    Nideal = torch.tensor([-0.5272, 1.3593, 0.000], device=xyz_in.device)
-    Cideal = torch.tensor([1.5233, 0.000, 0.000], device=xyz_in.device)
+    Nideal = torch.tensor([-0.5272, 1.3593, 0.000], device=xyz_in.device).float()
+    Cideal = torch.tensor([1.5233, 0.000, 0.000], device=xyz_in.device).float()
 
-    OP1ideal = torch.tensor([-0.7319, 1.2920, 0.000], device=xyz_in.device)
-    OP2ideal = torch.tensor([1.4855, 0.000, 0.000], device=xyz_in.device)
+    OP1ideal = torch.tensor([-0.7319, 1.2920, 0.000], device=xyz_in.device).float()
+    OP2ideal = torch.tensor([1.4855, 0.000, 0.000], device=xyz_in.device).float()
 
     pmask_bs,pmask_rs = protmask.nonzero(as_tuple=True)
     nmask_bs,nmask_rs = namask.nonzero(as_tuple=True)
@@ -227,7 +228,7 @@ def make_frame(X, Y):
     Xn = X / torch.linalg.norm(X)
     Y = Y - torch.dot(Y, Xn) * Xn
     Yn = Y / torch.linalg.norm(Y)
-    Z = torch.cross(Xn, Yn, dim=-1)
+    Z = torch.cross(Xn,Yn)
     Zn =  Z / torch.linalg.norm(Z)
     return torch.stack((Xn,Yn,Zn), dim=-1)
 

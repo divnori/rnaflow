@@ -91,7 +91,7 @@ def calc_str_loss(
         logit_pae, true_pae_label)
 
     pae_loss = (pae_loss[mask.bool()]).sum() / (mask.sum() + eps)
-    return tot_loss, loss.detach(), pae_loss
+    return tot_loss, loss, pae_loss
 
 #resolve rotationally equivalent sidechains
 def resolve_symmetry(xs, Rsnat_all, xsnat, Rsnat_all_alt, xsnat_alt, atm_mask):
@@ -353,7 +353,7 @@ class LJLoss(torch.autograd.Function):
                 device=xs.device
             )
             rii,rjj = ri[idx],rj[idx] 
-
+            
             ridx,ai,aj = (
                 aamask[seq[rii]][:,:,None]*aamask[seq[rjj]][:,None,:]
             ).nonzero(as_tuple=True)
