@@ -2,11 +2,11 @@
 
 RNAFlow is a flow matching model for protein-conditioned RNA sequence-structure design. Its denoising network integrates an RNA inverse folding model and a pre-trained RosettaFold2NA network for generation of RNA sequences and structures.
 
-#### Environment Setup ####
+### Environment Setup ###
 
-#### Running Inference ####
+### Running Inference ###
 
-To generate the necessary files to run RF2NA during the inference process, run the following command from the main directory:
+To generate the necessary files to run RF2NA during the inference process, run the following commands from the main directory:
 
 ```
 python rnaflow/data/process_data.py  --dataset rnaflow/data/rf2na_dataset.pickle --full_process False
@@ -15,10 +15,15 @@ python rnaflow/data/process_data.py  --dataset rnaflow/data/rf2na_dataset.pickle
 python rnaflow/data/process_data.py  --dataset rnaflow/data/seq_sim_dataset.pickle --full_process False
 ```
 
+This will create a folder called ```rnaflow/data/rf_data``` containing the necessary files to fold sequences with RF2NA. 
 
-This will create a folder called ```rnaflow/data/rf_data``` containing the necessary files to fold sequences with RF2NA.
+Then run the following command from the main directory:
 
-#### Processing Dataset ####
+```
+python scripts/inference_rnaflow.py
+```
+
+### Processing Dataset ###
 
 Pre-processed datasets for both splits are given at ```rnaflow/data/rf2na_dataset.pickle``` and ```rnaflow/data/seq_sim_dataset.pickle```
 
@@ -32,7 +37,7 @@ python rnaflow/data/process_data.py --pdbbind_csv rnaflow/data/pdbbind_na.csv \
     --full_process True
 ```
 
-#### Running Train ####
+### Running Train ###
 
 To retrain RNAFlow, get RF2NA weights from https://files.ipd.uw.edu/dimaio/RF2NA_apr23.tgz and save to ```RoseTTAFold2NA/network/weights/RF2NA_apr23.pt'''. To generate the necessary files to run RF2NA during the training process, run the following commands from the main directory:
 

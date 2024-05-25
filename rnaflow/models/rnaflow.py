@@ -29,7 +29,7 @@ class RNAFlow(pl.LightningModule):
         else:
             self.folding_model = Predictor(model, torch.device("cpu"))
 
-        self.csv_log_path = "/home/dnori/rna-design/src/scripts/lightning_logs/rnaflow.csv"
+        self.csv_log_path = "lightning_logs/rnaflow.csv"
 
         self.mse_loss = nn.MSELoss()
         self.pyrimidine_indices_to_set_1 = torch.tensor([1, 5, 12])
@@ -114,16 +114,14 @@ class RNAFlow(pl.LightningModule):
         pdb_id, data = batch
         pdb_id = pdb_id[0]
 
-        if not os.path.exists(f"/home/dnori/rna-design/src/scripts/output_pdbs_noprot_seq_sim/{pdb_id}"):
-            os.mkdir(f"/home/dnori/rna-design/src/scripts/output_pdbs_noprot_seq_sim/{pdb_id}")
+        if not os.path.exists(f"output_pdbs/{pdb_id}"):
+            os.mkdir(f"output_pdbs/{pdb_id}")
 
         for i in range(1):
 
-            print(pdb_id)
-
-            if not os.path.exists(f"/home/dnori/rna-design/src/scripts/output_pdbs_noprot_seq_sim/{pdb_id}/sample_{i}"):
-                os.mkdir(f"/home/dnori/rna-design/src/scripts/output_pdbs_noprot_seq_sim/{pdb_id}/sample_{i}")
-                os.mkdir(f"/home/dnori/rna-design/src/scripts/output_pdbs_noprot_seq_sim/{pdb_id}/sample_{i}/traj")
+            if not os.path.exists(f"output_pdbs/{pdb_id}/sample_{i}"):
+                os.mkdir(f"output_pdbs/{pdb_id}/sample_{i}")
+                os.mkdir(f"output_pdbs/{pdb_id}/sample_{i}/traj")
         
             true_cplx_crds = torch.cat((data["prot_coords"][0], data["rna_coords"][0]),axis=0)[None,:]
             noise_mask = torch.cat((torch.zeros((1, data["prot_coords"].shape[1])), torch.ones((1, data["rna_coords"].shape[1]))), dim=1)
@@ -134,11 +132,11 @@ class RNAFlow(pl.LightningModule):
             rand_one_hot[:,:,27] = 1
             with torch.inference_mode(False):
                 pred_docked_cplx, struct_loss, rna_rmsd, plddt = self.run_folding(pdb_id, data, rand_rna_seq, true_cplx_crds, rand_one_hot, fold_cplx=True) # passing true for RMSD calc
-                if pred_docked_cplx is None:
+                if type(pred_docked_cplx) != torch.Tensor:
                     outputs = {"rna_rmsd": 0, "rna_recovery": 0, "pdb_ids": pdb_id, "pred_seqs": "X"}
                     self.log_to_csv(outputs)
                     return None
-
+                
             # align coords to dock guess
             true_rna_aligned, _, _ = frame_utils.kabsch(data["rna_coords"].view(1,-1,3), pred_docked_cplx[noise_mask.bool()[0]].view(1,-1,3)) # [B, 3*L, 3]
             true_prot_aligned, _, _ = frame_utils.kabsch(data["prot_coords"].view(1,-1,3), pred_docked_cplx[~noise_mask.bool()[0]].view(1,-1,3))
@@ -173,7 +171,7 @@ class RNAFlow(pl.LightningModule):
 
                 # run through IF (with timestep)
                 seq_loss, rna_recovery_rate, pred_rna_seq, pred_one_hot, eval_perplexity, rank_perplexity = self.denoise_model.predict_step(batch, data=data, timestep=t_1_tensor, in_rnaflow=True)
-      
+        
                 # IF logits are in order A, G, C, U (swapping G and C for RF2NA)
                 pred_one_hot = pred_one_hot.cpu()
                 pred_one_hot = torch.cat((torch.zeros(pred_one_hot.shape[0],27), 
@@ -190,7 +188,7 @@ class RNAFlow(pl.LightningModule):
                 rna_centroid = torch.mean(pred_bb_crds[noise_mask[0].bool()], dim=(0,1))
                 pred_bb_crds_zeroed = pred_bb_crds - rna_centroid
                 rmsd_list.append(rna_rmsd)
-                pdb_utils.save_rna_pdb(pred_bb_crds_zeroed[noise_mask[0].bool()], data["rna_seq"][0], f"/home/dnori/rna-design/src/scripts/output_pdbs_noprot_seq_sim/{pdb_id}/sample_{i}/traj/t_{idx}.pdb")
+                pdb_utils.save_rna_pdb(pred_bb_crds_zeroed[noise_mask[0].bool()], data["rna_seq"][0], f"output_pdbs/{pdb_id}/sample_{i}/traj/t_{idx}.pdb")
 
                 # interpolate the RNA coords (all zero centered)
                 pred_trans_1 = pred_bb_crds_zeroed[noise_mask[0].bool()].contiguous().view(1,-1,3)
@@ -231,7 +229,7 @@ class RNAFlow(pl.LightningModule):
             rna_centroid = torch.mean(pred_bb_crds[noise_mask[0].bool()], dim=(0,1))
             pred_bb_crds_zeroed = pred_bb_crds - rna_centroid
             rmsd_list.append(final_rna_rmsd)
-            pdb_utils.save_rna_pdb(pred_bb_crds_zeroed[noise_mask[0].bool()], data["rna_seq"][0], f"/home/dnori/rna-design/src/scripts/output_pdbs_noprot_seq_sim/{pdb_id}/sample_{i}/traj/t_{idx}.pdb")
+            pdb_utils.save_rna_pdb(pred_bb_crds_zeroed[noise_mask[0].bool()], data["rna_seq"][0], f"output_pdbs/{pdb_id}/sample_{i}/traj/t_{idx}.pdb")
 
             # align true prot to pred prot
             true_prot_aligned, _, _ = frame_utils.kabsch(true_cplx_crds[:,~noise_mask[0].bool()].view(1,-1,3), pred_bb_crds_zeroed[None,~noise_mask.bool()[0]].view(1,-1,3))
@@ -239,13 +237,13 @@ class RNAFlow(pl.LightningModule):
 
             # final complex crds
             final_pred_cplx_crds = torch.cat((true_prot_aligned, pred_bb_crds[None,noise_mask[0].bool()]), dim=1)
-            pdb_utils.save_cplx_pdb(final_pred_cplx_crds[0], data["prot_seq"][0], data["rna_seq"][0], f"/home/dnori/rna-design/src/scripts/output_pdbs_noprot_seq_sim/{pdb_id}/sample_{i}/final_cplx.pdb")
+            pdb_utils.save_cplx_pdb(final_pred_cplx_crds[0], data["prot_seq"][0], data["rna_seq"][0], f"output_pdbs/{pdb_id}/sample_{i}/final_cplx.pdb")
             
             print(final_rna_rmsd, final_rna_recovery_rate.item())
             
             outputs = {"rna_rmsd": final_rna_rmsd, "rna_recovery": final_rna_recovery_rate.item(), "pdb_ids": pdb_id, "pred_seqs": final_pred_rna_seq, "rmsd_list": rmsd_list, "plddt": final_plddt, "eval_perplexity": eval_perplexity, "rank_perplexity": rank_perplexity}
             self.log_to_csv(outputs)
-    
+
     def on_train_epoch_end(self):
         avg_rna_rmsd = sum(self.epoch_rmsds)/len(self.epoch_rmsds)
         avg_rna_aar = sum(self.epoch_rna_aars)/len(self.epoch_rna_aars)

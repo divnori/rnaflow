@@ -22,7 +22,7 @@ MEM="64" # max memory (in GB)
 
 conda activate RF2NA
 
-rf_data_drectory="/home/dnori/rna-design/src/data/rf_data"
+rf_data_drectory="rnaflow/data/rf_data"
 directories=$(find "$rf_data_drectory" -type d)
 
 for dir in $directories; do

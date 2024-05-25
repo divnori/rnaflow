@@ -539,7 +539,8 @@ class Predictor():
         try:
             seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(
                 msa_orig, ins_orig, pred_one_hot=pred_one_hot, p_mask=0.0, params={'MAXLAT': MAXLAT, 'MAXSEQ': MAXSEQ, 'MAXCYCLE': MAX_CYCLE})
-        except:
+        except Exception as e:
+            print(e)
             return 0, torch.Tensor([0]).to("cuda"), 0, 0
 
         _, N, L = msa_seed.shape[:3]

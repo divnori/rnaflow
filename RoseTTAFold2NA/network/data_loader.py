@@ -113,17 +113,10 @@ def MSAFeaturize(msa, ins, params, pred_one_hot=None, p_mask=0.15, eps=1e-6, L_s
             term_info[start, 0] = 1.0 # flag for N-term
             term_info[start+L_chain-1,1] = 1.0 # flag for C-term
             start += L_chain
-        
-    # raw MSA profile
-    if pred_one_hot is None:
-        raw_profile = torch.nn.functional.one_hot(msa, num_classes=NAATOKENS)
-    elif N > 1: # folding complex
-        raw_profile_orig = torch.nn.functional.one_hot(msa, num_classes=NAATOKENS)
-        raw_profile = pred_one_hot
-        raw_profile = torch.cat((raw_profile_orig[:,:raw_profile_orig.shape[1]-raw_profile.shape[1]], raw_profile.repeat((raw_profile_orig.shape[0],1,1))), dim=1)
-    else: # folding just RNA
-        raw_profile = pred_one_hot
-    raw_profile = raw_profile.float().mean(dim=0)
+
+    raw_profile = torch.nn.functional.one_hot(msa, num_classes=NAATOKENS)
+    raw_profile[:,50:] = pred_one_hot
+    pred_one_hotcplx = raw_profile
 
     # Nclust sequences will be selected randomly as a seed MSA (aka latent MSA)
     # - First sequence is always query sequence
@@ -184,17 +177,17 @@ def MSAFeaturize(msa, ins, params, pred_one_hot=None, p_mask=0.15, eps=1e-6, L_s
         N_extra_pool = msa_extra.shape[0]
         
         # 1. one_hot encoded aatype: msa_clust_onehot
-        if pred_one_hot is not None:
-            if N == 1: # folding just RNA
-                msa_clust_onehot = pred_one_hot
-                msa_extra_onehot = pred_one_hot
-            else: # folding complex
+        if pred_one_hotcplx is not None:
+            if N == 1:
+                msa_clust_onehot = pred_one_hotcplx
+                msa_extra_onehot = pred_one_hotcplx
+            else:
                 msa_clust_onehot = torch.nn.functional.one_hot(msa_masked, num_classes=NAATOKENS) # (N, L, 22)
                 msa_extra_onehot = torch.nn.functional.one_hot(msa_extra, num_classes=NAATOKENS)
         else:
             msa_clust_onehot = torch.nn.functional.one_hot(msa_masked, num_classes=NAATOKENS) # (N, L, 22)
             msa_extra_onehot = torch.nn.functional.one_hot(msa_extra, num_classes=NAATOKENS)
-            
+                    
         # clustering (assign remaining sequences to their closest cluster by Hamming distance
         count_clust = torch.logical_and(~mask_pos, msa_clust != 20) # 20: index for gap, ignore both masked & gaps
         count_extra = torch.logical_and(~extra_mask, msa_extra != 20) 

@@ -9,7 +9,6 @@ from models.inverse_folding import InverseFoldingModel
 
 RF_DATA_FOLDER = "rnaflow/data/rf_data"
 DATASET_PKL = "rnaflow/data/rf2na_dataset.pickle"
-split = "rf2na"
 
 if __name__ == "__main__":
     print("Training RNAFlow Model.")
@@ -19,7 +18,7 @@ if __name__ == "__main__":
     val_dataloader = data_module.val_dataloader()
 
     rnaflow = RNAFlow()
-    rnaflow.denoise_model = InverseFoldingModel.load_from_checkpoint(f"checkpoints/{split}_pretrained_inverse_folder.ckpt")
+    rnaflow.denoise_model = InverseFoldingModel()
     checkpoint_callback = ModelCheckpoint(dirpath="checkpoints", save_top_k=3, monitor="val_loss", filename="rnaflow-{epoch:02d}-{val_loss:.2f}")
 
     trainer = Trainer(devices=1, enable_checkpointing=True, callbacks=[checkpoint_callback], check_val_every_n_epoch=3, max_epochs=500) 
