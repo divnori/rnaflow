@@ -17,7 +17,7 @@ import pdb_utils
 from interpolant import Interpolant, _centered_gaussian, NM_TO_ANG_SCALE
 
 model = "RoseTTAFold2NA/network/weights/RF2NA_apr23.pt"
-RF_DATA_FOLDER = "rf_data"
+RF_DATA_FOLDER = "rnaflow/data/rf_data"
 
 class RNAFlow(pl.LightningModule):
 

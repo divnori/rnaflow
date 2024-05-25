@@ -184,21 +184,21 @@ def write_rf_files(dataset, fa=False, prot_msa=False, rna_msa=False):
             prot_chain_seq = v["prot_seq"]
             rna_chain_seq = v["rna_seq"]
 
-            if not os.path.exists(f"rf_data/{pdb_id}"):
-                os.makedirs(f"rf_data/{pdb_id}")
+            if not os.path.exists(f"rnaflow/data/rf_data/{pdb_id}"):
+                os.makedirs(f"rnaflow/data/rf_data/{pdb_id}")
 
             if fa:
-                with open(f"rf_data/{pdb_id}/prot.fa", 'w') as fasta_file:
+                with open(f"rnaflow/data/rf_data/{pdb_id}/prot.fa", 'w') as fasta_file:
                     fasta_file.write(f'>prot\n{prot_chain_seq}\n')
-                with open(f"rf_data/{pdb_id}/rna.fa", 'w') as fasta_file:
+                with open(f"rnaflow/data/rf_data/{pdb_id}/rna.fa", 'w') as fasta_file:
                     fasta_file.write(f'>rna\n{rna_chain_seq}\n')
                     
             if prot_msa: # blank msa (just gt seq)
-                with open(f"rf_data/{pdb_id}/prot.a3m", 'w') as msa_file:
+                with open(f"rnaflow/data/rf_data/{pdb_id}/prot.a3m", 'w') as msa_file:
                     msa_file.write(f'>prot\n{prot_chain_seq}\n')
 
             if rna_msa:
-                with open(f"rf_data/{pdb_id}/rna.afa", 'w') as msa_file:
+                with open(f"rnaflow/data/rf_data/{pdb_id}/rna.afa", 'w') as msa_file:
                     msa_file.write(f'>rna\n{rna_chain_seq}\n')
 
 def save_splits(rf2na_test_csv, pdb_out_dir, split="rf2na"):
@@ -211,7 +211,7 @@ def save_splits(rf2na_test_csv, pdb_out_dir, split="rf2na"):
     pdb_labels = []
     data_list = []
 
-    pdb_ids = os.listdir("data/rf_data")
+    pdb_ids = os.listdir("rnaflow/data/rf_data")
     rf2na_cutoff = datetime.strptime("2023-04-13", "%Y-%m-%d")
 
     files = os.listdir(pdb_out_dir)
@@ -292,10 +292,18 @@ if __name__ == "__main__":
     parser.add_argument("--pdb_out_dir", type=str, default="rnaflow/data/pdbs", help="Directory to save PDB files")
     parser.add_argument("--rf2na_test_csv", type=str, default="rnaflow/data/rf2na_test_val_set.csv", help="CSV file containing list of PDBs held out from rf2na training")
     parser.add_argument("--dataset", type=str, default="rnaflow/data/rf2na_dataset.pickle", help="Path to save the dataset")
+    parser.add_argument("--full_process", type=bool, default=False)
     args = parser.parse_args()
 
-    load_and_filter(args.pdbbind_csv, args.pdb_out_dir)
-    save_splits(args.rf2na_test_csv, args.pdb_out_dir, split="rf2na")
-    write_rf_files(args.dataset, fa=True, prot_msa=False, rna_msa=True)
-    subprocess.run(["python", "prot_msa.py"])
-    subprocess.run(['bash', 'rnaflow/data/run_RF2NA_mod.sh'])
+    
+    if not args.full_process:
+        # Write files for RNAFlow training and inference
+        write_rf_files(args.dataset, fa=True, prot_msa=True, rna_msa=True)
+
+    else:
+        # Full preprocessing pipeline
+        load_and_filter(args.pdbbind_csv, args.pdb_out_dir)
+        save_splits(args.rf2na_test_csv, args.pdb_out_dir, split="rf2na")
+        write_rf_files(args.dataset, fa=True, prot_msa=True, rna_msa=True)
+        subprocess.run(["python", "prot_msa.py"])
+        subprocess.run(['bash', 'rnaflow/data/run_RF2NA_mod.sh'])

@@ -7,9 +7,9 @@ from data.dataloader import RFDataModule
 from models.rnaflow import RNAFlow
 from models.inverse_folding import InverseFoldingModel
 
-RF_DATA_FOLDER = "REPLACE WITH YOUR PATH"
-DATASET_PKL = "REPLACE WITH YOUR PATH"
-split = "rf2na" # can replace with "seq_sim"
+RF_DATA_FOLDER = "rnaflow/data/rf_data"
+DATASET_PKL = "rnaflow/data/rf2na_dataset.pickle"
+split = "rf2na"
 
 if __name__ == "__main__":
     print("Training RNAFlow Model.")
