@@ -8,14 +8,12 @@ import torch.nn.functional as F
 
 network_path = os.path.join('RoseTTAFold2NA/network')
 sys.path.append(network_path)
-
-data_path = os.path.join('rnaflow/data')
-sys.path.append(data_path)
-
 from predict import Predictor
+
+utils_path = os.path.join('rnaflow/utils')
+sys.path.append(utils_path)
 import frame_utils
 import pdb_utils
-from inverse_folding import InverseFoldingModel
 from interpolant import Interpolant, _centered_gaussian, NM_TO_ANG_SCALE
 
 model = "RoseTTAFold2NA/network/weights/RF2NA_apr23.pt"
