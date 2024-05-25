@@ -2,7 +2,24 @@
 
 RNAFlow is a flow matching model for protein-conditioned RNA sequence-structure design. Its denoising network integrates an RNA inverse folding model and a pre-trained RosettaFold2NA network for generation of RNA sequences and structures.
 
+<p align="center">
+    <img src="images/rnaflow_main.jpeg" width="600"/>
+</p>
+
 ### Environment Setup ###
+
+All external dependencies are contained in `environment.yml`
+```
+conda env create -f environment.yml
+```
+You also need to install NVIDIA's SE(3)-Transformer.
+```
+conda activate RF2NA
+cd RoseTTAFold2NA/SE3Transformer
+pip install --no-cache-dir -r requirements.txt
+python setup.py install
+cd ../../
+```
 
 ### Running Inference ###
 
@@ -22,6 +39,8 @@ Then run the following command from the main directory:
 ```
 python scripts/inference_rnaflow.py
 ```
+
+The script will print RMSD and sequence recovery for each generated sample. PDBs for the final complex and each structure in the trajectory will also be saved.
 
 ### Processing Dataset ###
 
