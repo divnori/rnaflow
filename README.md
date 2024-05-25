@@ -3,7 +3,7 @@
 RNAFlow is a flow matching model for protein-conditioned RNA sequence-structure design. Its denoising network integrates an RNA inverse folding model and a pre-trained RosettaFold2NA network for generation of RNA sequences and structures.
 
 <p align="center">
-    <img src="images/rnaflow_main.jpeg" width="600"/>
+    <img src="images/rnaflow_main.jpeg" width="900"/>
 </p>
 
 ### Environment Setup ###

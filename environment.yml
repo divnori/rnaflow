@@ -237,7 +237,6 @@ dependencies:
       - numba==0.58.1
       - oauthlib==3.2.2
       - omegaconf==2.3.0
-      - openmm==0.2
       - opt-einsum==3.3.0
       - opt-einsum-fx==0.1.4
       - pandas==2.1.4
