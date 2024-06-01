@@ -6,6 +6,8 @@ RNAFlow is a flow matching model for protein-conditioned RNA sequence-structure 
     <img src="images/rnaflow_main.jpeg" width="900"/>
 </p>
 
+Paper: [RNAFlow: RNA Structure & Sequence Design via Inverse Folding-Based Flow Matching](https://arxiv.org/pdf/2405.18768), ICML 2024
+
 ### Running Inference ###
 
 To generate the necessary files to run RF2NA during the inference process, run the following commands from the main directory:
