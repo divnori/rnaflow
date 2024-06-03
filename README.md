@@ -25,7 +25,7 @@ cd ../../
 
 ### Running Inference ###
 
-To generate the necessary files to run RF2NA during the inference process, run the following commands from the main directory:
+To generate the necessary files to run RF2NA during the inference process, run the following commands from the main directory (need to run both commands regardless of what split you are using):
 
 ```
 python rnaflow/data/process_data.py  --dataset rnaflow/data/rf2na_dataset.pickle --full_process False
