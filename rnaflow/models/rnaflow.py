@@ -16,6 +16,8 @@ import frame_utils
 import pdb_utils
 from interpolant import Interpolant, _centered_gaussian, NM_TO_ANG_SCALE
 
+from models.inverse_folding import InverseFoldingModel
+
 model = "RoseTTAFold2NA/network/weights/RF2NA_apr23.pt"
 RF_DATA_FOLDER = "rnaflow/data/rf_data"
 
@@ -43,6 +45,7 @@ class RNAFlow(pl.LightningModule):
             param.data = param.data.float()
 
         self.interpolant = Interpolant()
+        self.denoise_model = InverseFoldingModel()
 
         self.epoch_rmsds = []
         self.epoch_rna_aars = []
@@ -241,7 +244,7 @@ class RNAFlow(pl.LightningModule):
             
             print(final_rna_rmsd, final_rna_recovery_rate.item())
             
-            outputs = {"rna_rmsd": final_rna_rmsd, "rna_recovery": final_rna_recovery_rate.item(), "pdb_ids": pdb_id, "pred_seqs": final_pred_rna_seq, "rmsd_list": rmsd_list, "plddt": final_plddt, "eval_perplexity": eval_perplexity, "rank_perplexity": rank_perplexity}
+            outputs = {"rna_rmsd": final_rna_rmsd, "rna_recovery": final_rna_recovery_rate.item(), "pdb_ids": pdb_id, "pred_seqs": final_pred_rna_seq}
             self.log_to_csv(outputs)
 
     def on_train_epoch_end(self):
