@@ -6,20 +6,7 @@ RNAFlow is a flow matching model for protein-conditioned RNA sequence-structure 
     <img src="images/rnaflow_main.jpeg" width="900"/>
 </p>
 
-### Environment Setup ###
-
-All external dependencies are contained in `environment.yml`
-```
-conda env create -f environment.yml
-```
-You also need to install NVIDIA's SE(3)-Transformer.
-```
-conda activate rnaflow
-cd RoseTTAFold2NA/SE3Transformer
-pip install --no-cache-dir -r requirements.txt
-python setup.py install
-cd ../../
-```
+Paper: [RNAFlow: RNA Structure & Sequence Design via Inverse Folding-Based Flow Matching](https://arxiv.org/pdf/2405.18768), ICML 2024
 
 ### Running Inference ###
 
