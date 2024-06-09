@@ -162,7 +162,6 @@ class RNAFlow(pl.LightningModule):
 
             prot_traj = [prior_cplx_crds]
             idx = 0
-            rmsd_list = []
             for t_2 in ts[1:]:
 
                 t_1_tensor = torch.Tensor([t_1]).to(true_cplx_crds.device)
@@ -190,7 +189,6 @@ class RNAFlow(pl.LightningModule):
                 # zero center pred RNA
                 rna_centroid = torch.mean(pred_bb_crds[noise_mask[0].bool()], dim=(0,1))
                 pred_bb_crds_zeroed = pred_bb_crds - rna_centroid
-                rmsd_list.append(rna_rmsd)
                 pdb_utils.save_rna_pdb(pred_bb_crds_zeroed[noise_mask[0].bool()], data["rna_seq"][0], f"output_pdbs/{pdb_id}/sample_{i}/traj/t_{idx}.pdb")
 
                 # interpolate the RNA coords (all zero centered)
@@ -215,7 +213,7 @@ class RNAFlow(pl.LightningModule):
             data["rna_coords"] = crds_t_1[:,noise_mask.bool()[0]]
 
             # run through IF (with timestep)
-            seq_loss, final_rna_recovery_rate, final_pred_rna_seq, pred_one_hot, eval_perplexity, rank_perplexity = self.denoise_model.predict_step(batch, data=data, timestep=t_1_tensor, in_rnaflow=True)
+            seq_loss, final_rna_recovery_rate, final_pred_rna_seq, pred_one_hot, _, _ = self.denoise_model.predict_step(batch, data=data, timestep=t_1_tensor, in_rnaflow=True)
 
             # IF logits are in order A, G, C, U (swapping G and C for RF2NA)
             pred_one_hot = pred_one_hot.cpu()
@@ -231,7 +229,6 @@ class RNAFlow(pl.LightningModule):
             # zero center pred complex on pred RNA
             rna_centroid = torch.mean(pred_bb_crds[noise_mask[0].bool()], dim=(0,1))
             pred_bb_crds_zeroed = pred_bb_crds - rna_centroid
-            rmsd_list.append(final_rna_rmsd)
             pdb_utils.save_rna_pdb(pred_bb_crds_zeroed[noise_mask[0].bool()], data["rna_seq"][0], f"output_pdbs/{pdb_id}/sample_{i}/traj/t_{idx}.pdb")
 
             # align true prot to pred prot
@@ -241,10 +238,11 @@ class RNAFlow(pl.LightningModule):
             # final complex crds
             final_pred_cplx_crds = torch.cat((true_prot_aligned, pred_bb_crds[None,noise_mask[0].bool()]), dim=1)
             pdb_utils.save_cplx_pdb(final_pred_cplx_crds[0], data["prot_seq"][0], data["rna_seq"][0], f"output_pdbs/{pdb_id}/sample_{i}/final_cplx.pdb")
+
+            lddt = self.calc_lddt(pred_bb_crds[None, None, :, 1], true_cplx_crds[0, :, 1]).item()
+            print(f"lDDT: {lddt}, Recovery Rate: {final_rna_recovery_rate.item()}")
             
-            print(final_rna_rmsd, final_rna_recovery_rate.item())
-            
-            outputs = {"rna_rmsd": final_rna_rmsd, "rna_recovery": final_rna_recovery_rate.item(), "pdb_ids": pdb_id, "pred_seqs": final_pred_rna_seq}
+            outputs = {"rna_lddt": lddt, "rna_recovery": final_rna_recovery_rate.item(), "pdb_ids": pdb_id, "pred_seqs": final_pred_rna_seq}
             self.log_to_csv(outputs)
 
     def on_train_epoch_end(self):
@@ -364,3 +362,30 @@ class RNAFlow(pl.LightningModule):
                 else:
                     row[key] = value
             writer.writerow(row)
+
+    def calc_lddt(self, pred_ca, true_ca, eps=1e-6):
+        # Input
+        # pred_ca: predicted CA coordinates (I, B, L, 3)
+        # true_ca: true CA coordinates (B, L, 3)
+
+        I, B, L = pred_ca.shape[:3]
+        mask_crds = torch.ones((1,1,L)).to(pred_ca.device)
+
+        pred_ca = pred_ca.contiguous()
+        true_ca = true_ca.contiguous()
+
+        pred_dist = torch.cdist(pred_ca, pred_ca) # (I, B, L, L)
+        true_dist = torch.cdist(true_ca, true_ca).unsqueeze(0) # (1, B, L, L)
+
+        mask = torch.logical_and(true_dist > 0.0, true_dist < 15.0) # (1, B, L, L)
+        mask_crds = mask_crds * (mask[0].sum(dim=-1) != 0)
+        
+        delta = torch.abs(pred_dist-true_dist) # (I, B, L, L)
+
+        true_lddt = torch.zeros((I,B,L), device=pred_ca.device)
+        for distbin in [0.5, 1.0, 2.0, 4.0]:
+            true_lddt += 0.25*torch.sum((delta<=distbin)*mask, dim=-1) / (torch.sum(mask, dim=-1) + eps)
+        
+        true_lddt = mask_crds*true_lddt
+        true_lddt = true_lddt.sum(dim=(1,2)) / (mask_crds.sum() + eps)
+        return true_lddt

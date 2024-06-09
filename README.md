@@ -13,6 +13,7 @@ External dependencies are contained in `environment.yml`
 ```
 conda env create -f environment.yml
 ```
+Additionally, please install ```torch-scatter```, ```torch-cluster```, and ```openmm``` (compatible with your CUDA version).
 
 You also need to install NVIDIA's SE(3)-Transformer (**please use SE3Transformer in this repo to install**).
 ```

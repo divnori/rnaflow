@@ -194,7 +194,6 @@ dependencies:
       - cython==3.0.8
       - datasets==2.16.1
       - dill==0.3.7
-      - dllogger==1.0.0
       - docker-pycreds==0.4.0
       - docstring-parser==0.15
       - e3nn==0.3.3
@@ -238,7 +237,6 @@ dependencies:
       - numba==0.58.1
       - oauthlib==3.2.2
       - omegaconf==2.3.0
-      - openmm==0.2
       - opt-einsum==3.3.0
       - opt-einsum-fx==0.1.4
       - pandas==2.1.4
@@ -274,8 +272,6 @@ dependencies:
       - tensorflow-io-gcs-filesystem==0.35.0
       - termcolor==2.4.0
       - tokenizers==0.15.0
-      - torch-cluster==1.6.3+pt20cu117
-      - torch-scatter==2.0.8
       - torchmetrics==1.2.1
       - transformers==4.36.2
       - tyro==0.6.3

@@ -32,6 +32,9 @@ protein_letters_3to1 = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': '
 
 def load_and_filter(csv_file, pdb_out_dir):
 
+    if not os.path.exists(pdb_out_dir):
+        os.makedirs(pdb_out_dir)
+
     print(f"Processing {csv_file}.")
 
     # filter to protein-RNA complexes
