@@ -8,7 +8,7 @@ RNAFlow is a flow matching model for protein-conditioned RNA sequence-structure 
 
 Paper: [RNAFlow: RNA Structure & Sequence Design via Inverse Folding-Based Flow Matching](https://arxiv.org/pdf/2405.18768), ICML 2024
 
-## Environment Setup ##
+### Environment Setup ###
 External dependencies are contained in `environment.yml`
 ```
 conda env create -f environment.yml
@@ -23,6 +23,9 @@ pip install --no-cache-dir -r requirements.txt
 python setup.py install
 cd ../../
 ```
+
+### Design Your Own RNAs ###
+Please see ```tutorial.ipynb``` for information on how to design your own RNA sequences and backbone structures, given a target backbone protein pocket and protein sequence.
 
 ### Running Inference ###
 
