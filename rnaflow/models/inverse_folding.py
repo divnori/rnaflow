@@ -141,6 +141,18 @@ class InverseFoldingModel(pl.LightningModule):
             else:
                 pred_one_hot = F.one_hot(pred_rna.long(), num_classes=4)
                 return None, rna_recovery_rate, pred_rna_seq, pred_one_hot, eval_perplexity, rank_perplexity
+
+    def design_rna(self, prot_seq, prot_coords, rna_seq, rna_coords, timestep):
+        is_rna = torch.cat((torch.zeros((len(prot_seq),)), torch.ones((rna_coords.shape[0],))), dim=0).bool()
+        rna_graph, rna_coords = self.data_featurizer._featurize(rna_seq, rna_coords.unsqueeze(0)) # batch dim and conf dim match
+        prot_graph, prot_coords = self.data_featurizer._featurize(prot_seq, prot_coords.unsqueeze(0), rna=False)
+        cplx_graph = self.data_featurizer._connect_graphs(prot_graph, rna_graph, prot_coords, rna_coords)
+        samples, logits = self.model.sample(cplx_graph, 1, timestep, temperature=0.1, is_rna_mask=is_rna) # autoregressive
+        pred_rna = samples[0,is_rna]
+        pred_rna_seq = "".join([self.data_featurizer.rna_num_to_letter.get(x, "X") for x in pred_rna.tolist()])
+        pred_one_hot = F.one_hot(pred_rna.long(), num_classes=4)
+        return pred_rna_seq, pred_one_hot
+
     
     def on_train_epoch_end(self):
         avg_loss = sum(self.epoch_losses)/len(self.epoch_losses)

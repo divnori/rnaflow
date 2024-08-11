@@ -389,3 +389,135 @@ class RNAFlow(pl.LightningModule):
         true_lddt = mask_crds*true_lddt
         true_lddt = true_lddt.sum(dim=(1,2)) / (mask_crds.sum() + eps)
         return true_lddt
+    
+    def design_rna(self, prot_seq, prot_coords, rna_len, input_folder_path):
+        """
+        prot_seq: str
+        prot_coords: N x 3 x 3
+        """
+
+        noise_mask = torch.cat((torch.zeros((1, len(prot_seq))), torch.ones((1, rna_len))), dim=1)
+
+        # initial dock guess
+        rand_rna_seq = "A" * rna_len
+        rand_one_hot = torch.zeros((1,len(rand_rna_seq),32))
+        rand_one_hot[:,:,27] = 1
+        with torch.inference_mode(False):
+            pred_docked_cplx  = self.run_folding_for_design(prot_seq, rand_rna_seq, rand_one_hot, input_folder_path)
+            if type(pred_docked_cplx) != torch.Tensor:
+                print("RF2NA Error.")
+                return None
+            
+        prot_coords = prot_coords.to(pred_docked_cplx.device)
+        true_prot_aligned, _, _ = frame_utils.kabsch(prot_coords.view(1,-1,3), pred_docked_cplx[~noise_mask.bool()[0]].view(1,-1,3))
+        true_prot_aligned = true_prot_aligned.view(1,-1,3,3)
+        
+        # sample prior
+        trans_0 = _centered_gaussian(1, int(noise_mask.sum().item()*3), true_prot_aligned.device) * NM_TO_ANG_SCALE
+        prior_crds = trans_0.view(1, -1, 3, 3)
+        prior_cplx_crds = torch.cat((true_prot_aligned, prior_crds), dim=1) # RNA noise centered at zero
+
+        ts = torch.linspace(0.01, 1.0, 5)
+        t_1 = ts[0]
+
+        prot_traj = [prior_cplx_crds]
+        idx = 0
+        for t_2 in ts[1:]:
+
+            t_1_tensor = torch.Tensor([t_1]).to(true_prot_aligned.device)
+
+            crds_t_1 = prot_traj[-1]
+            trans_t_1 = crds_t_1[:,noise_mask.bool()[0]].view(1,-1,3)
+
+            # run through IF (with timestep)
+            pred_rna_seq, pred_one_hot = self.denoise_model.design_rna(prot_seq, crds_t_1[0,~noise_mask.bool()[0]], rand_rna_seq, crds_t_1[0,noise_mask.bool()[0]], t_1_tensor) # pass in rand_rna_seq (gets masked)
+    
+            # IF logits are in order A, G, C, U (swapping G and C for RF2NA)
+            pred_one_hot = pred_one_hot.cpu()
+            pred_one_hot = torch.cat((torch.zeros(pred_one_hot.shape[0],27), 
+                                    pred_one_hot[:,0:1], pred_one_hot[:,2:3],
+                                    pred_one_hot[:,1:2], pred_one_hot[:,3:], 
+                                    torch.zeros(pred_one_hot.shape[0],1)), dim=-1)[None,:]
+            
+
+            # run through RF2NA
+            with torch.inference_mode(False):
+                pred_bb_crds = self.run_folding_for_design(prot_seq, pred_rna_seq, pred_one_hot, input_folder_path)
+
+            # zero center pred RNA
+            rna_centroid = torch.mean(pred_bb_crds[noise_mask[0].bool()], dim=(0,1))
+            pred_bb_crds_zeroed = pred_bb_crds - rna_centroid
+
+            # interpolate the RNA coords (all zero centered)
+            pred_trans_1 = pred_bb_crds_zeroed[noise_mask[0].bool()].contiguous().view(1,-1,3)
+            d_t = t_2 - t_1
+            trans_t_2 = self.interpolant._trans_euler_step(d_t, t_1, pred_trans_1, trans_t_1)
+
+            # align true prot to pred prot
+            true_prot_aligned, _, _ = frame_utils.kabsch(prot_coords.view(1,-1,3), pred_bb_crds_zeroed[~noise_mask.bool()[0]].view(1,-1,3))
+            true_prot_aligned = true_prot_aligned.view(1,-1,3,3)
+            crds_t_2 = torch.cat((true_prot_aligned, trans_t_2.view(1, -1, 3, 3)), dim=1)
+
+            prot_traj.append(crds_t_2)
+            t_1 = t_2
+            idx+=1
+
+        # Final step
+        t_1 = ts[-1]
+        t_1_tensor = torch.Tensor([t_1]).to(self.device)
+        crds_t_1 = prot_traj[-1]
+        trans_t_1 = crds_t_1[:,noise_mask.bool()[0]].view(1,-1,3)
+
+        # run through IF (with timestep)
+        final_pred_rna_seq, pred_one_hot = self.denoise_model.design_rna(prot_seq, crds_t_1[0,~noise_mask.bool()[0]], rand_rna_seq, crds_t_1[0,noise_mask.bool()[0]], t_1_tensor) # pass in rand_rna_seq (gets masked)
+
+        # IF logits are in order A, G, C, U (swapping G and C for RF2NA)
+        pred_one_hot = pred_one_hot.cpu()
+        pred_one_hot = torch.cat((torch.zeros(pred_one_hot.shape[0],27), 
+                                pred_one_hot[:,0:1], pred_one_hot[:,2:3],
+                                pred_one_hot[:,1:2], pred_one_hot[:,3:], 
+                                torch.zeros(pred_one_hot.shape[0],1)), dim=-1)[None,:]
+
+        # run through RF2NA
+        with torch.inference_mode(False):
+            pred_bb_crds = self.run_folding_for_design(prot_seq, pred_rna_seq, pred_one_hot, input_folder_path)
+        
+        # zero center pred complex on pred RNA
+        rna_centroid = torch.mean(pred_bb_crds[noise_mask[0].bool()], dim=(0,1))
+        pred_bb_crds_zeroed = pred_bb_crds - rna_centroid
+
+        # align true prot to pred prot
+        true_prot_aligned, _, _ = frame_utils.kabsch(prot_coords.view(1,-1,3), pred_bb_crds_zeroed[~noise_mask.bool()[0]].view(1,-1,3))
+        true_prot_aligned = true_prot_aligned.view(1,-1,3,3)
+
+        # final complex crds
+        final_pred_cplx_crds = torch.cat((true_prot_aligned, pred_bb_crds[None,noise_mask[0].bool()]), dim=1)
+
+        return final_pred_rna_seq, final_pred_cplx_crds[0]
+            
+            
+    def run_folding_for_design(self, prot_seq, rna_seq, pred_one_hot, input_folder_path):
+
+        rna_codes = torch.tensor([self.nucleotide_mapping[n] for n in rna_seq])
+        backbone_mask_tensor = torch.zeros(len(rna_seq), 36)
+
+        backbone_mask_tensor[torch.nonzero(rna_codes==1), self.pyrimidine_indices_to_set_1] = 1
+        backbone_mask_tensor[torch.nonzero(rna_codes==3), self.pyrimidine_indices_to_set_1] = 1
+        backbone_mask_tensor[torch.nonzero(rna_codes==0), self.adenine_indices_to_set_1] = 1
+        backbone_mask_tensor[torch.nonzero(rna_codes==2), self.guanine_indices_to_set_1] = 1
+        backbone_mask_tensor = torch.cat((torch.zeros((len(prot_seq), 36)), backbone_mask_tensor), dim=0)
+        backbone_mask_tensor[:len(prot_seq),:3] = 1
+        backbone_mask_tensor = backbone_mask_tensor[:,:,None].repeat((1,1,3)).to("cuda")
+
+        prot_a3m = os.path.join(input_folder_path, "prot.a3m")
+        prot_hhr = os.path.join(input_folder_path, "prot.hhr")
+        prot_atab = os.path.join(input_folder_path, "prot.atab")
+        rna_afa = os.path.join(input_folder_path, "rna.afa")
+        inputs = f"P:{prot_a3m}:{prot_hhr}:{prot_atab} R:{rna_afa}"
+        outs = self.folding_model.prep_inputs(inputs, ffdb=None, rna_seq_input=rna_seq, pred_one_hot=pred_one_hot)
+
+        seq_i, pred_crds, logit_pae, mask_t_2d, same_chain, plddt = self.folding_model.run_rf_module(*outs)
+
+        pred_bb_crds = torch.masked_select(pred_crds[0], backbone_mask_tensor.bool()).reshape((backbone_mask_tensor.shape[0],3,3))
+        plddt = torch.mean(plddt).cpu().item()
+        return pred_bb_crds

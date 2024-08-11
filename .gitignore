@@ -3,3 +3,4 @@ rnaflow/data/rf_data/*
 lightning_logs/*
 output_pdbs/*
 analysis.ipynb
+tmp_files/*
